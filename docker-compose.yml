@@ -1,0 +1,75 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────
+# Farmer Assistant – Docker Compose
+# Spins up: MySQL 8 + Spring Boot app
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── MySQL Database ──────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: farmer-assistant-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: farmer_assistant_db
+      MYSQL_USER: ${DB_USERNAME:-farmer_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-farmer_pass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - farmer-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Spring Boot Application ─────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: farmer-assistant-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/farmer_assistant_db?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME:-farmer_user}
+      DB_PASSWORD: ${DB_PASSWORD:-farmer_pass}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-must-be-very-long-for-hs256-algorithm}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SPRING_PROFILES_ACTIVE: prod
+    ports:
+      - "8080:8080"
+    volumes:
+      - app_logs:/app/logs
+    networks:
+      - farmer-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ── Volumes ─────────────────────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local
+  app_logs:
+    driver: local
+
+# ── Networks ────────────────────────────────────────────────
+networks:
+  farmer-net:
+    driver: bridge
